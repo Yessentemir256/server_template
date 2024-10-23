@@ -1,10 +1,16 @@
 package main
 
 import (
+	"bytes"
+	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net"
 	"os"
+	"strconv"
+	"strings"
+	"time"
 )
 
 func main() {
@@ -60,19 +66,62 @@ func handle(conn net.Conn) (err error) {
 			log.Print(err)
 		}
 	}()
-	// TODO : handle connection
-	conn.Write([]byte("Hello!\r\n"))
 
 	buf := make([]byte, 4096)
-	for {
-		n, err := conn.Read(buf)
-		if err == io.EOF {
-			log.Printf("%s", buf[:n])
-			return nil
+
+	n, err := conn.Read(buf)
+	if err == io.EOF {
+		log.Printf("%s", buf[:n])
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	data := buf[:n]
+	requestLineDelim := []byte{'\r', '\n'}
+	requestLineEnd := bytes.Index(data, requestLineDelim)
+	if requestLineEnd == -1 {
+		return err
+	}
+
+	requestLine := string(data[:requestLineEnd])
+	parts := strings.Split(requestLine, " ")
+	if len(parts) != 3 {
+		return err
+	}
+
+	method, path, version := parts[0], parts[1], parts[2]
+	if method != "GET" {
+		return err
+	}
+
+	if version != "HTTP/1.1" {
+		return err
+	}
+
+	if path == "/" {
+		body, err := os.ReadFile("static/index.html")
+		if err != nil {
+			return fmt.Errorf("can't read index.html: %w", err)
 		}
+
+		marker := "{{year}}"
+		year := time.Now().Year()
+		body = bytes.ReplaceAll(body, []byte(marker), []byte(strconv.Itoa(year)))
+
+		_, err = conn.Write([]byte(
+			"HTTP/1.1 200 OK\r\n" +
+				"Content-Length: " + strconv.Itoa(len(body)) + "\r\n" +
+				"Content-Type: text/html\r\n" +
+				"Connection: close\r\n" +
+				"\r\n" +
+				string(body),
+		))
 		if err != nil {
 			return err
 		}
-		log.Printf("%s", buf[:n])
 	}
+	// Добавленный возврат ошибки, если все проверки не проходят
+	return errors.New("unexpected error occurred")
 }
